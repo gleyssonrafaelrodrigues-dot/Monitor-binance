@@ -11,11 +11,16 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
-st.set_page_config(page_title="Monitor MACD Binance", page_icon="📈", layout="centered")
+st.set_page_config(
+    page_title="Vector Trade Pro",
+    page_icon="₿",
+    layout="centered"
+)
 TZ = ZoneInfo("America/Sao_Paulo")
 BASE = "https://data-api.binance.vision"
 
-st.title("📈 Monitor MACD — Binance Spot")
+st.title("🟡 VECTOR TRADE PRO")
+st.caption("Monitor Binance Spot · BTC/BRL e SOL/BRL")
 st.caption("BTC/BRL e SOL/BRL · M3 + confirmação SMA 9/12 no M15 · Somente alertas")
 
 with st.sidebar:

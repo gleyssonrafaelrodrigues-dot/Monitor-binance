@@ -11,7 +11,7 @@ import streamlit as st
 
 st.set_page_config(page_title="Monitor MACD Binance", page_icon="📈", layout="centered")
 TZ = ZoneInfo("America/Sao_Paulo")
-BASE = "https://api.binance.com"
+BASE = "https://data-api.binance.sision"
 
 st.title("📈 Monitor MACD — Binance Spot")
 st.caption("BTC/BRL e SOL/BRL · M3 + confirmação SMA 9/12 no M15 · Somente alertas")

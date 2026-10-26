@@ -12,7 +12,7 @@ from plotly.subplots import make_subplots
 import streamlit as st
 
 st.set_page_config(
-    page_title="Vector Trade Pro",
+    page_title="RODRIGUES DAYTRADE",
     page_icon="₿",
     layout="centered"
 )

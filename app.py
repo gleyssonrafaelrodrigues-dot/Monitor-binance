@@ -33,7 +33,7 @@ with logo_col:
         st.markdown("## 🟡")
 with title_col:
     st.title("RODRIGUES DAYTRADE")
-    st.caption("BTC/BRL e SOL/BRL · MACD + SMA · Somente alertas, sem execução de ordens")
+    st.caption("BTC/BRL · MACD + SMA · Somente alertas, sem execução de ordens")
 
 # -------------------- Settings --------------------
 interval_labels = {"3 minutos": "3m", "15 minutos": "15m", "1 hora": "1h"}

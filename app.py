@@ -11,38 +11,59 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
-st.set_page_config(
-    page_title="Rodrigues Daytrade",
-    page_icon="₿",
-    layout="centered"
-)
+st.set_page_config(page_title="Rodrigues Daytrade", page_icon="₿", layout="wide")
 TZ = ZoneInfo("America/Sao_Paulo")
 BASE = "https://data-api.binance.vision"
 
-st.title("🟡 RODRIGUES DAYTRADE")
-st.caption("BTC/BRL e SOL/BRL · M3 + confirmação SMA 9/12 no M15 · Somente alertas")
+# -------------------- Visual --------------------
+st.markdown("""
+<style>
+.stApp { background: #080808; color: #f5f5f5; }
+[data-testid="stSidebar"] { background: #111111; border-right: 1px solid #8a641b; }
+h1, h2, h3 { color: #e9b949 !important; }
+div[data-testid="stMetric"] { background: #121212; border: 1px solid #6f5118; padding: 12px; border-radius: 10px; }
+</style>
+""", unsafe_allow_html=True)
 
+logo_col, title_col = st.columns([1, 3])
+with logo_col:
+    try:
+        st.image("logo_rodrigues.png", use_container_width=True)
+    except Exception:
+        st.markdown("## 🟡")
+with title_col:
+    st.title("RODRIGUES DAYTRADE")
+    st.caption("BTC/BRL e SOL/BRL · MACD + SMA · Somente alertas, sem execução de ordens")
+
+# -------------------- Settings --------------------
+interval_labels = {"3 minutos": "3m", "15 minutos": "15m", "1 hora": "1h"}
 with st.sidebar:
     st.header("Configurações")
+    selected_label = st.selectbox("Tempo gráfico", list(interval_labels.keys()), index=0)
+    interval = interval_labels[selected_label]
+    refresh = st.slider("Atualização (segundos)", 15, 120, 30, 15)
     tolerance = st.number_input("Tolerância DIF/DEA", min_value=0.0, value=5.0, step=1.0)
-    refresh = st.slider("Atualização (segundos)", min_value=15, max_value=120, value=30, step=15)
     st.markdown("### Entrada")
-    entry_dif = st.number_input("DIF de entrada", value=-280.0, step=1.0)
-    entry_dea = st.number_input("DEA de entrada", value=-285.0, step=1.0)
+    entry_dif = st.number_input("DIF de entrada", value=-1000.0, step=10.0)
+    entry_dea = st.number_input("DEA de entrada", value=-800.0, step=10.0)
     st.markdown("### Saída")
-    exit_dif = st.number_input("DIF de saída", value=455.0, step=1.0)
-    exit_dea = st.number_input("DEA de saída", value=450.0, step=1.0)
-    st.info("M3: sinal pelo MACD. M15: SMA 9 > SMA 12 confirma entrada; SMA 9 < SMA 12 confirma saída.")
+    exit_dif = st.number_input("DIF de saída", value=455.0, step=10.0)
+    exit_dea = st.number_input("DEA de saída", value=450.0, step=10.0)
+    st.markdown("### Confirmação por médias")
+    sma_fast_period = st.selectbox("SMA rápida", [9, 5, 7, 10], index=0)
+    sma_slow_period = st.selectbox("SMA lenta", [12, 10, 14, 20], index=0)
+    st.info("Os indicadores e sinais usam o período selecionado. Valores MACD dependem do ativo; ajuste DIF/DEA para cada ativo se necessário.")
 
-def get_klines(symbol, interval, limit=120):
+def get_klines(symbol, interval, limit=150):
     query = urllib.parse.urlencode({"symbol": symbol, "interval": interval, "limit": limit})
     req = urllib.request.Request(
         f"{BASE}/api/v3/klines?{query}",
-        headers={"User-Agent": "MobileMACDMonitor/1.0"},
+        headers={"User-Agent": "RodriguesDaytrade/1.0"},
     )
     with urllib.request.urlopen(req, timeout=15) as response:
         rows = json.loads(response.read().decode("utf-8"))
     now_ms = int(time.time() * 1000)
+    # Binance kline field 6 is close time. Ignore the still-open candle.
     return [r for r in rows if int(r[6]) < now_ms]
 
 def ema(values, period):
@@ -59,18 +80,11 @@ def macd_series(values):
     hist = [a - b for a, b in zip(dif, dea)]
     return dif, dea, hist
 
-def macd(values):
-    dif, dea, _ = macd_series(values)
-    return dif[-1], dea[-1]
-
 def sma_series(values, period):
-    result = []
+    out = []
     for i in range(len(values)):
-        if i + 1 < period:
-            result.append(None)
-        else:
-            result.append(sum(values[i + 1 - period:i + 1]) / period)
-    return result
+        out.append(None if i + 1 < period else sum(values[i + 1 - period:i + 1]) / period)
+    return out
 
 def get_state():
     if "signals" not in st.session_state:
@@ -79,30 +93,29 @@ def get_state():
         st.session_state.seen = set()
 
 def analyze(symbol):
-    m3 = get_klines(symbol, "3m")
-    m15 = get_klines(symbol, "15m")
-    if len(m3) < 40 or len(m15) < 15:
-        raise RuntimeError("Dados históricos insuficientes")
-    close3 = [float(x[4]) for x in m3]
-    close15 = [float(x[4]) for x in m15]
-    dif, dea = macd(close3)
-    sma9 = sum(close15[-9:]) / 9
-    sma12 = sum(close15[-12:]) / 12
-    price = close3[-1]
-    candle_time = datetime.fromtimestamp(int(m3[-1][6]) / 1000, timezone.utc).astimezone(TZ)
-    entry = abs(dif - entry_dif) <= tolerance and abs(dea - entry_dea) <= tolerance and sma9 > sma12
-    exit_ = abs(dif - exit_dif) <= tolerance and abs(dea - exit_dea) <= tolerance and sma9 < sma12
-    signal = "ENTRADA" if entry else ("SAÍDA" if exit_ else "Sem sinal")
+    rows = get_klines(symbol, interval, 150)
+    if len(rows) < 40:
+        raise RuntimeError(f"Dados históricos insuficientes para {symbol} em {interval}.")
+    closes = [float(r[4]) for r in rows]
+    difs, deas, _ = macd_series(closes)
+    dif, dea = difs[-1], deas[-1]
+    sma_fast = sum(closes[-sma_fast_period:]) / sma_fast_period
+    sma_slow = sum(closes[-sma_slow_period:]) / sma_slow_period
+    price = closes[-1]
+    candle_time = datetime.fromtimestamp(int(rows[-1][6]) / 1000, timezone.utc).astimezone(TZ)
+    entry = abs(dif - entry_dif) <= tolerance and abs(dea - entry_dea) <= tolerance and sma_fast > sma_slow
+    exit_signal = abs(dif - exit_dif) <= tolerance and abs(dea - exit_dea) <= tolerance and sma_fast < sma_slow
+    signal = "ENTRADA" if entry else ("SAÍDA" if exit_signal else "Sem sinal")
     return {
-        "Ativo": symbol, "Sinal": signal, "Preço": price, "DIF (M3)": dif,
-        "DEA (M3)": dea, "SMA 9 (M15)": sma9, "SMA 12 (M15)": sma12,
-        "Confirmação M15": "ALTA" if sma9 > sma12 else ("BAIXA" if sma9 < sma12 else "NEUTRA"),
+        "Ativo": symbol, "Período": interval, "Sinal": signal, "Preço": price,
+        "DIF": dif, "DEA": dea, "SMA rápida": sma_fast, "SMA lenta": sma_slow,
+        "Tendência": "ALTA" if sma_fast > sma_slow else ("BAIXA" if sma_fast < sma_slow else "NEUTRA"),
         "Horário do candle": candle_time.strftime("%d/%m/%Y %H:%M:%S"),
-        "candle_key": f"{symbol}:{int(m3[-1][6])}:{signal}",
+        "candle_key": f"{symbol}:{interval}:{int(rows[-1][6])}:{signal}",
     }
 
 def build_chart(symbol):
-    rows = get_klines(symbol, "3m", 120)
+    rows = get_klines(symbol, interval, 150)
     if len(rows) < 35:
         raise RuntimeError("Histórico insuficiente para desenhar o gráfico.")
     dates = [datetime.fromtimestamp(int(r[0]) / 1000, timezone.utc).astimezone(TZ) for r in rows]
@@ -111,63 +124,79 @@ def build_chart(symbol):
     lows = [float(r[3]) for r in rows]
     closes = [float(r[4]) for r in rows]
     dif, dea, hist = macd_series(closes)
-    sma9 = sma_series(closes, 9)
-    sma12 = sma_series(closes, 12)
-    fig = make_subplots(
-        rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.06,
-        row_heights=[0.68, 0.32],
-        subplot_titles=("Candles M3 + SMA 9/12", "MACD M3 — DIF, DEA e histograma"),
-    )
+    sma_fast = sma_series(closes, sma_fast_period)
+    sma_slow = sma_series(closes, sma_slow_period)
+
+    # Signal markers are calculated from the same thresholds and selected timeframe.
+    buy_x, buy_y, sell_x, sell_y = [], [], [], []
+    for i in range(1, len(closes)):
+        fast_now = sma_fast[i]
+        slow_now = sma_slow[i]
+        if fast_now is None or slow_now is None:
+            continue
+        is_entry = abs(dif[i] - entry_dif) <= tolerance and abs(dea[i] - entry_dea) <= tolerance and fast_now > slow_now
+        is_exit = abs(dif[i] - exit_dif) <= tolerance and abs(dea[i] - exit_dea) <= tolerance and fast_now < slow_now
+        if is_entry:
+            buy_x.append(dates[i]); buy_y.append(lows[i] * 0.998)
+        if is_exit:
+            sell_x.append(dates[i]); sell_y.append(highs[i] * 1.002)
+
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.045,
+                        row_heights=[0.68, 0.32],
+                        subplot_titles=(f"Candles {interval} + SMA {sma_fast_period}/{sma_slow_period}",
+                                        f"MACD {interval} — DIF, DEA e histograma"))
     fig.add_trace(go.Candlestick(
-        x=dates, open=opens, high=highs, low=lows, close=closes,
-        name="Candles", increasing_line_color="#16a34a", decreasing_line_color="#dc2626",
+        x=dates, open=opens, high=highs, low=lows, close=closes, name="Candles",
+        increasing_line_color="#16c784", increasing_fillcolor="#16c784",
+        decreasing_line_color="#ea3943", decreasing_fillcolor="#ea3943"
     ), row=1, col=1)
-    fig.add_trace(go.Scatter(
-        x=dates, y=sma9, mode="lines", name="SMA 9 (M3)",
-        line=dict(color="#f59e0b", width=1.5),
-    ), row=1, col=1)
-    fig.add_trace(go.Scatter(
-        x=dates, y=sma12, mode="lines", name="SMA 12 (M3)",
-        line=dict(color="#3b82f6", width=1.5),
-    ), row=1, col=1)
-    colors = ["#16a34a" if value >= 0 else "#dc2626" for value in hist]
+    fig.add_trace(go.Scatter(x=dates, y=sma_fast, mode="lines", name=f"SMA {sma_fast_period}",
+                             line=dict(color="#f5b82e", width=1.8)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=dates, y=sma_slow, mode="lines", name=f"SMA {sma_slow_period}",
+                             line=dict(color="#536dfe", width=1.8)), row=1, col=1)
+    if buy_x:
+        fig.add_trace(go.Scatter(x=buy_x, y=buy_y, mode="markers+text", name="ENTRADA",
+                                 text=["B"] * len(buy_x), textposition="bottom center",
+                                 marker=dict(symbol="circle", size=15, color="#16c784", line=dict(color="white", width=1)),
+                                 textfont=dict(color="white", size=10)), row=1, col=1)
+    if sell_x:
+        fig.add_trace(go.Scatter(x=sell_x, y=sell_y, mode="markers+text", name="SAÍDA",
+                                 text=["S"] * len(sell_x), textposition="top center",
+                                 marker=dict(symbol="circle", size=15, color="#ea3943", line=dict(color="white", width=1)),
+                                 textfont=dict(color="white", size=10)), row=1, col=1)
+    colors = ["#16c784" if v >= 0 else "#ea3943" for v in hist]
     fig.add_trace(go.Bar(x=dates, y=hist, name="Histograma", marker_color=colors), row=2, col=1)
-    fig.add_trace(go.Scatter(
-        x=dates, y=dif, mode="lines", name="DIF", line=dict(color="#f59e0b", width=1.4),
-    ), row=2, col=1)
-    fig.add_trace(go.Scatter(
-        x=dates, y=dea, mode="lines", name="DEA", line=dict(color="#3b82f6", width=1.4),
-    ), row=2, col=1)
+    fig.add_trace(go.Scatter(x=dates, y=dif, mode="lines", name="DIF",
+                             line=dict(color="#f5b82e", width=1.5)), row=2, col=1)
+    fig.add_trace(go.Scatter(x=dates, y=dea, mode="lines", name="DEA",
+                             line=dict(color="#536dfe", width=1.5)), row=2, col=1)
     fig.update_layout(
-        height=650, margin=dict(l=8, r=8, t=60, b=8),
+        template="plotly_dark", paper_bgcolor="#080808", plot_bgcolor="#080808",
+        height=720, margin=dict(l=10, r=10, t=65, b=10),
         xaxis_rangeslider_visible=False, hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
-    fig.update_xaxes(showgrid=True, gridcolor="rgba(128,128,128,0.15)")
-    fig.update_yaxes(showgrid=True, gridcolor="rgba(128,128,128,0.15)")
+    fig.update_xaxes(showgrid=True, gridcolor="rgba(180,180,180,0.15)")
+    fig.update_yaxes(showgrid=True, gridcolor="rgba(180,180,180,0.15)")
     return fig
 
 get_state()
-st.write(f"**Última atualização:** {datetime.now(TZ).strftime('%d/%m/%Y %H:%M:%S')} (Brasília)")
+st.caption(f"Última atualização: {datetime.now(TZ).strftime('%d/%m/%Y %H:%M:%S')} (Brasília)")
 if st.button("🔄 Atualizar agora", use_container_width=True):
     st.rerun()
 
 try:
     results = [analyze(sym) for sym in ("BTCBRL", "SOLBRL")]
     for result in results:
-        st.subheader("₿ " + result["Ativo"] if result["Ativo"] == "BTCBRL" else "◎ " + result["Ativo"])
-        a, b = st.columns(2)
-        a.metric("Preço", f'{result["Preço"]:,.2f} BRL')
-        b.metric("Sinal", result["Sinal"])
-        c, d = st.columns(2)
-        c.metric("DIF (M3)", f'{result["DIF (M3)"]:.4f}')
-        d.metric("DEA (M3)", f'{result["DEA (M3)"]:.4f}')
-        st.caption(
-            f'SMA9 M15: {result["SMA 9 (M15)"]:.4f} · '
-            f'SMA12 M15: {result["SMA 12 (M15)"]:.4f} · '
-            f'Tendência: {result["Confirmação M15"]}'
-        )
-        st.caption(f'Candle fechado: {result["Horário do candle"]}')
+        st.subheader("₿ BTC/BRL" if result["Ativo"] == "BTCBRL" else "◎ SOL/BRL")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Preço", f'{result["Preço"]:,.2f} BRL')
+        col2.metric("Sinal", result["Sinal"])
+        col3.metric("Tendência", result["Tendência"])
+        col4, col5 = st.columns(2)
+        col4.metric("DIF", f'{result["DIF"]:.4f}')
+        col5.metric("DEA", f'{result["DEA"]:.4f}')
+        st.caption(f'SMA rápida: {result["SMA rápida"]:.4f} · SMA lenta: {result["SMA lenta"]:.4f} · Candle fechado: {result["Horário do candle"]}')
         if result["Sinal"] != "Sem sinal":
             key = result["candle_key"]
             if key not in st.session_state.seen:
@@ -179,19 +208,10 @@ try:
         st.divider()
 
     st.subheader("📊 Gráfico")
-    chart_asset = st.selectbox(
-        "Escolha o ativo para o gráfico",
-        options=["BTCBRL", "SOLBRL"],
-        format_func=lambda value: "BTC/BRL" if value == "BTCBRL" else "SOL/BRL",
-    )
-    st.caption(
-        "Candles M3, SMA 9/12 no M3 para visualização e MACD M3. "
-        "A confirmação dos sinais continua usando SMA 9/12 no M15."
-    )
-    try:
-        st.plotly_chart(build_chart(chart_asset), use_container_width=True, config={"scrollZoom": False})
-    except Exception as chart_error:
-        st.error(f"Não foi possível montar o gráfico: {chart_error}")
+    chart_asset = st.selectbox("Escolha o ativo para o gráfico", ["BTCBRL", "SOLBRL"],
+                               format_func=lambda v: "BTC/BRL" if v == "BTCBRL" else "SOL/BRL")
+    st.caption(f"Candles, médias móveis, MACD e marcadores B/S no período selecionado: {selected_label}.")
+    st.plotly_chart(build_chart(chart_asset), use_container_width=True, config={"scrollZoom": True})
 
 except Exception as e:
     st.error(f"Não foi possível consultar a Binance: {e}")
@@ -204,16 +224,11 @@ if st.session_state.signals:
     writer = csv.DictWriter(csv_buffer, fieldnames=list(st.session_state.signals[0].keys()))
     writer.writeheader()
     writer.writerows(st.session_state.signals)
-    st.download_button(
-        "Baixar histórico CSV", csv_buffer.getvalue(), "sinais_binance.csv",
-        "text/csv", use_container_width=True,
-    )
+    st.download_button("Baixar histórico CSV", csv_buffer.getvalue(), "sinais_binance.csv",
+                       "text/csv", use_container_width=True)
 else:
     st.info("Nenhum sinal detectado nesta sessão.")
 
-st.caption(
-    "O painel consulta dados públicos. Não envia ordens. Mantenha o painel aberto para atualizar; "
-    "a sessão e o histórico local podem ser perdidos ao reiniciar."
-)
+st.caption("Dados públicos da Binance. Este painel não envia ordens. Os sinais são informativos e não garantem resultados.")
 time.sleep(refresh)
 st.rerun()

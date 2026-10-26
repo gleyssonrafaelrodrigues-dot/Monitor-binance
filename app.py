@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
-st.set_page_config(page_title="Rodrigues Daytrade", page_icon="₿", layout="wide")
+st.set_page_config(page_title="Rodrigues Daytrade", page_icon="₿", layout="centered")
 TZ = ZoneInfo("America/Sao_Paulo")
 BASE = "https://data-api.binance.vision"
 
@@ -21,19 +21,22 @@ st.markdown("""
 .stApp { background: #080808; color: #f5f5f5; }
 [data-testid="stSidebar"] { background: #111111; border-right: 1px solid #8a641b; }
 h1, h2, h3 { color: #e9b949 !important; }
-div[data-testid="stMetric"] { background: #121212; border: 1px solid #6f5118; padding: 12px; border-radius: 10px; }
+.block-container { padding-top: .45rem; padding-bottom: .35rem; max-width: 100%; }
+div[data-testid="stMetric"] { background: #121212; border: 1px solid #6f5118; padding: 5px 7px; border-radius: 8px; }
+div[data-testid="stMetricLabel"] { font-size: .75rem; }
+div[data-testid="stMetricValue"] { font-size: 1rem; }
 </style>
 """, unsafe_allow_html=True)
 
 logo_col, title_col = st.columns([1, 3])
 with logo_col:
     try:
-        st.image("logo_rodrigues.png", use_container_width=True)
+        st.image("logo_rodrigues.png", width=76)
     except Exception:
         st.markdown("## 🟡")
 with title_col:
-    st.title("RODRIGUES DAYTRADE")
-    st.caption("BTC/BRL · MACD + SMA · Somente alertas, sem execução de ordens")
+    st.markdown("### 🟡 RODRIGUES DAYTRADE")
+    st.caption("BTC/BRL · SOL/BRL | Somente alertas")
 
 # -------------------- Settings --------------------
 interval_labels = {"3 minutos": "3m", "15 minutos": "15m", "1 hora": "1h"}
@@ -86,149 +89,48 @@ def sma_series(values, period):
         out.append(None if i + 1 < period else sum(values[i + 1 - period:i + 1]) / period)
     return out
 
-def get_state():
-    if "signals" not in st.session_state:
-        st.session_state.signals = []
-    if "seen" not in st.session_state:
-        st.session_state.seen = set()
-
-def analyze(symbol):
-    rows = get_klines(symbol, interval, 150)
-    if len(rows) < 40:
-        raise RuntimeError(f"Dados históricos insuficientes para {symbol} em {interval}.")
-    closes = [float(r[4]) for r in rows]
-    difs, deas, _ = macd_series(closes)
-    dif, dea = difs[-1], deas[-1]
-    sma_fast = sum(closes[-sma_fast_period:]) / sma_fast_period
-    sma_slow = sum(closes[-sma_slow_period:]) / sma_slow_period
-    price = closes[-1]
-    candle_time = datetime.fromtimestamp(int(rows[-1][6]) / 1000, timezone.utc).astimezone(TZ)
-    entry = abs(dif - entry_dif) <= tolerance and abs(dea - entry_dea) <= tolerance and sma_fast > sma_slow
-    exit_signal = abs(dif - exit_dif) <= tolerance and abs(dea - exit_dea) <= tolerance and sma_fast < sma_slow
-    signal = "ENTRADA" if entry else ("SAÍDA" if exit_signal else "Sem sinal")
-    return {
-        "Ativo": symbol, "Período": interval, "Sinal": signal, "Preço": price,
-        "DIF": dif, "DEA": dea, "SMA rápida": sma_fast, "SMA lenta": sma_slow,
-        "Tendência": "ALTA" if sma_fast > sma_slow else ("BAIXA" if sma_fast < sma_slow else "NEUTRA"),
-        "Horário do candle": candle_time.strftime("%d/%m/%Y %H:%M:%S"),
-        "candle_key": f"{symbol}:{interval}:{int(rows[-1][6])}:{signal}",
-    }
-
-def build_chart(symbol):
-    rows = get_klines(symbol, interval, 150)
-    if len(rows) < 35:
-        raise RuntimeError("Histórico insuficiente para desenhar o gráfico.")
-    dates = [datetime.fromtimestamp(int(r[0]) / 1000, timezone.utc).astimezone(TZ) for r in rows]
-    opens = [float(r[1]) for r in rows]
-    highs = [float(r[2]) for r in rows]
-    lows = [float(r[3]) for r in rows]
-    closes = [float(r[4]) for r in rows]
-    dif, dea, hist = macd_series(closes)
-    sma_fast = sma_series(closes, sma_fast_period)
-    sma_slow = sma_series(closes, sma_slow_period)
-
-    # Signal markers are calculated from the same thresholds and selected timeframe.
-    buy_x, buy_y, sell_x, sell_y = [], [], [], []
-    for i in range(1, len(closes)):
-        fast_now = sma_fast[i]
-        slow_now = sma_slow[i]
-        if fast_now is None or slow_now is None:
-            continue
-        is_entry = abs(dif[i] - entry_dif) <= tolerance and abs(dea[i] - entry_dea) <= tolerance and fast_now > slow_now
-        is_exit = abs(dif[i] - exit_dif) <= tolerance and abs(dea[i] - exit_dea) <= tolerance and fast_now < slow_now
-        if is_entry:
-            buy_x.append(dates[i]); buy_y.append(lows[i] * 0.998)
-        if is_exit:
-            sell_x.append(dates[i]); sell_y.append(highs[i] * 1.002)
-
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.045,
-                        row_heights=[0.68, 0.32],
-                        subplot_titles=(f"Candles {interval} + SMA {sma_fast_period}/{sma_slow_period}",
-                                        f"MACD {interval} — DIF, DEA e histograma"))
-    fig.add_trace(go.Candlestick(
-        x=dates, open=opens, high=highs, low=lows, close=closes, name="Candles",
-        increasing_line_color="#16c784", increasing_fillcolor="#16c784",
-        decreasing_line_color="#ea3943", decreasing_fillcolor="#ea3943"
-    ), row=1, col=1)
-    fig.add_trace(go.Scatter(x=dates, y=sma_fast, mode="lines", name=f"SMA {sma_fast_period}",
-                             line=dict(color="#f5b82e", width=1.8)), row=1, col=1)
-    fig.add_trace(go.Scatter(x=dates, y=sma_slow, mode="lines", name=f"SMA {sma_slow_period}",
-                             line=dict(color="#536dfe", width=1.8)), row=1, col=1)
-    if buy_x:
-        fig.add_trace(go.Scatter(x=buy_x, y=buy_y, mode="markers+text", name="ENTRADA",
-                                 text=["B"] * len(buy_x), textposition="bottom center",
-                                 marker=dict(symbol="circle", size=15, color="#16c784", line=dict(color="white", width=1)),
-                                 textfont=dict(color="white", size=10)), row=1, col=1)
-    if sell_x:
-        fig.add_trace(go.Scatter(x=sell_x, y=sell_y, mode="markers+text", name="SAÍDA",
-                                 text=["S"] * len(sell_x), textposition="top center",
-                                 marker=dict(symbol="circle", size=15, color="#ea3943", line=dict(color="white", width=1)),
-                                 textfont=dict(color="white", size=10)), row=1, col=1)
-    colors = ["#16c784" if v >= 0 else "#ea3943" for v in hist]
-    fig.add_trace(go.Bar(x=dates, y=hist, name="Histograma", marker_color=colors), row=2, col=1)
-    fig.add_trace(go.Scatter(x=dates, y=dif, mode="lines", name="DIF",
-                             line=dict(color="#f5b82e", width=1.5)), row=2, col=1)
-    fig.add_trace(go.Scatter(x=dates, y=dea, mode="lines", name="DEA",
-                             line=dict(color="#536dfe", width=1.5)), row=2, col=1)
-    fig.update_layout(
-        template="plotly_dark", paper_bgcolor="#080808", plot_bgcolor="#080808",
-        height=720, margin=dict(l=10, r=10, t=65, b=10),
-        xaxis_rangeslider_visible=False, hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-    )
-    fig.update_xaxes(showgrid=True, gridcolor="rgba(180,180,180,0.15)")
-    fig.update_yaxes(showgrid=True, gridcolor="rgba(180,180,180,0.15)")
-    return fig
-
-get_state()
-st.caption(f"Última atualização: {datetime.now(TZ).strftime('%d/%m/%Y %H:%M:%S')} (Brasília)")
-if st.button("🔄 Atualizar agora", use_container_width=True):
-    st.rerun()
+def get_state()
+col_asset, col_period, col_refresh = st.columns([1.2, 1.2, 1])
+with col_asset:
+    chart_asset = st.selectbox("Ativo", ["BTCBRL", "SOLBRL"], format_func=lambda v: "BTC/BRL" if v == "BTCBRL" else "SOL/BRL")
+with col_period:
+    selected_label = st.selectbox("Tempo gráfico", list(interval_labels.keys()), index=list(interval_labels.values()).index(interval))
+    interval = interval_labels[selected_label]
+with col_refresh:
+    st.write("")
+    if st.button("🔄", use_container_width=True): st.rerun()
 
 try:
-    results = [analyze(sym) for sym in ("BTCBRL", "SOLBRL")]
-    for result in results:
-        st.subheader("₿ BTC/BRL" if result["Ativo"] == "BTCBRL" else "◎ SOL/BRL")
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Preço", f'{result["Preço"]:,.2f} BRL')
-        col2.metric("Sinal", result["Sinal"])
-        col3.metric("Tendência", result["Tendência"])
-        col4, col5 = st.columns(2)
-        col4.metric("DIF", f'{result["DIF"]:.4f}')
-        col5.metric("DEA", f'{result["DEA"]:.4f}')
-        st.caption(f'SMA rápida: {result["SMA rápida"]:.4f} · SMA lenta: {result["SMA lenta"]:.4f} · Candle fechado: {result["Horário do candle"]}')
-        if result["Sinal"] != "Sem sinal":
-            key = result["candle_key"]
-            if key not in st.session_state.seen:
-                st.session_state.seen.add(key)
-                record = {k: v for k, v in result.items() if k != "candle_key"}
-                record["Registrado em"] = datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
-                st.session_state.signals.insert(0, record)
-                st.toast(f'{result["Ativo"]}: {result["Sinal"]}', icon="🔔")
-        st.divider()
-
-    st.subheader("📊 Gráfico")
-    chart_asset = st.selectbox("Escolha o ativo para o gráfico", ["BTCBRL", "SOLBRL"],
-                               format_func=lambda v: "BTC/BRL" if v == "BTCBRL" else "SOL/BRL")
-    st.caption(f"Candles, médias móveis, MACD e marcadores B/S no período selecionado: {selected_label}.")
-    st.plotly_chart(build_chart(chart_asset), use_container_width=True, config={"scrollZoom": True})
-
+    result = analyze(chart_asset)
+    a, b, c = st.columns(3)
+    a.metric("Preço (BRL)", f'{result["Preço"]:,.2f}')
+    b.metric("Sinal", result["Sinal"])
+    c.metric("Tendência", result["Tendência"])
+    st.caption(f'DIF {result["DIF"]:.2f} · DEA {result["DEA"]:.2f} · SMA rápida {result["SMA rápida"]:.2f} · SMA lenta {result["SMA lenta"]:.2f}')
+    st.plotly_chart(build_chart(chart_asset), use_container_width=True, config={"scrollZoom": True, "displayModeBar": False})
+    st.caption(f'Candle fechado: {result["Horário do candle"]} · Atualizado {datetime.now(TZ).strftime("%H:%M:%S")}')
+    if result["Sinal"] != "Sem sinal":
+        key = result["candle_key"]
+        if key not in st.session_state.seen:
+            st.session_state.seen.add(key)
+            record = {k: v for k, v in result.items() if k != "candle_key"}
+            record["Registrado em"] = datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
+            st.session_state.signals.insert(0, record)
+            st.toast(f'{result["Ativo"]}: {result["Sinal"]}', icon="🔔")
 except Exception as e:
     st.error(f"Não foi possível consultar a Binance: {e}")
     st.caption("Verifique a conexão com a internet e tente novamente.")
 
-st.subheader("📋 Histórico de sinais nesta sessão")
-if st.session_state.signals:
-    st.dataframe(st.session_state.signals, use_container_width=True, hide_index=True)
-    csv_buffer = io.StringIO()
-    writer = csv.DictWriter(csv_buffer, fieldnames=list(st.session_state.signals[0].keys()))
-    writer.writeheader()
-    writer.writerows(st.session_state.signals)
-    st.download_button("Baixar histórico CSV", csv_buffer.getvalue(), "sinais_binance.csv",
-                       "text/csv", use_container_width=True)
-else:
-    st.info("Nenhum sinal detectado nesta sessão.")
+with st.expander("📋 Histórico de sinais"):
+    if st.session_state.signals:
+        st.dataframe(st.session_state.signals, use_container_width=True, hide_index=True)
+        csv_buffer = io.StringIO()
+        writer = csv.DictWriter(csv_buffer, fieldnames=list(st.session_state.signals[0].keys()))
+        writer.writeheader(); writer.writerows(st.session_state.signals)
+        st.download_button("Baixar histórico CSV", csv_buffer.getvalue(), "sinais_binance.csv", "text/csv", use_container_width=True)
+    else:
+        st.info("Nenhum sinal detectado nesta sessão.")
 
-st.caption("Dados públicos da Binance. Este painel não envia ordens. Os sinais são informativos e não garantem resultados.")
+st.caption("Dados públicos da Binance · Não envia ordens · Atualização automática")
 time.sleep(refresh)
 st.rerun()

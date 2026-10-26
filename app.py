@@ -19,7 +19,7 @@ st.set_page_config(
 TZ = ZoneInfo("America/Sao_Paulo")
 BASE = "https://data-api.binance.vision"
 
-st.title("🟡 VECTOR TRADE PRO")
+st.title("🟡 RODRIGUES DAYTRADE")
 st.caption("BTC/BRL e SOL/BRL · M3 + confirmação SMA 9/12 no M15 · Somente alertas")
 
 with st.sidebar:

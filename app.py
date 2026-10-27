@@ -32,7 +32,14 @@ div[data-testid="stPlotlyChart"] {border:1px solid #3a3019;border-radius:12px;ov
 # Header/logo
 c_logo, c_title = st.columns([0.75, 3.25], vertical_alignment="center")
 with c_logo:
-    st.image("logo_rodrigues.png", width=88)
+
+    from pathlib import Path
+    logo = Path(__file__).parent / "logo_rodrigues.png"
+    if logo.exists():
+        st.image(str(logo), width=88)
+    else:
+        st.markdown("## 🟡")
+
 with c_title:
     st.markdown("<h2 style='margin:0;color:#e8b746'>RODRIGUES DAYTRADE</h2>", unsafe_allow_html=True)
     st.caption("DISCIPLINA · ESTRATÉGIA · RESULTADOS")

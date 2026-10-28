@@ -92,33 +92,165 @@ def sma_series(values, period):
         result.append(None if i + 1 < period else sum(values[i + 1 - period:i + 1]) / period)
     return result
 
-def get_state():
-    if "signals" not in st.session_state:
-        st.session_state.signals = []
-    if "seen" not in st.session_state:
-        st.session_state.seen = set()
 
-def analyze(symbol, interval):
-    rows = get_klines(symbol, interval, 150)
-    if len(rows) < 40:
-        raise RuntimeError(f"Histórico insuficiente para {symbol} em {interval}.")
-    close = [float(r[4]) for r in rows]
-    difs, deas, _ = macd_series(close)
-    dif, dea = difs[-1], deas[-1]
-    sma_fast = sum(close[-sma_fast_period:]) / sma_fast_period
-    sma_slow = sum(close[-sma_slow_period:]) / sma_slow_period
-    candle_time = datetime.fromtimestamp(int(rows[-1][6]) / 1000, timezone.utc).astimezone(TZ)
-    entry = abs(dif-entry_dif) <= tolerance and abs(dea-entry_dea) <= tolerance and sma_fast > sma_slow
-    exit_signal = abs(dif-exit_dif) <= tolerance and abs(dea-exit_dea) <= tolerance and sma_fast < sma_slow
-    signal = "ENTRADA" if entry else ("SAÍDA" if exit_signal else "AGUARDANDO")
-    return {
-        "Ativo": symbol, "Período": interval, "Sinal": signal, "Preço": close[-1],
-        "DIF": dif, "DEA": dea, "Histograma": dif-dea,
-        "SMA rápida": sma_fast, "SMA lenta": sma_slow,
-        "Tendência": "ALTA" if sma_fast > sma_slow else ("BAIXA" if sma_fast < sma_slow else "NEUTRA"),
-        "Horário": candle_time.strftime("%d/%m/%Y %H:%M:%S"),
-        "key": f"{symbol}:{interval}:{int(rows[-1][6])}:{signal}"
-    }
+get_state()
+
+st.markdown("""
+<style>
+.stApp {
+    background: #050505;
+    color: #f5f5f5;
+}
+.block-container {
+    max-width: 100%;
+    padding: .4rem .45rem .5rem;
+}
+h1, h2, h3 {
+    color: #e8b746 !important;
+}
+div[data-testid="stMetric"] {
+    background: #090909;
+    border: 1px solid #4d3b16;
+    border-radius: 8px;
+    padding: 5px 8px;
+}
+div[data-testid="stMetricValue"] {
+    font-size: 1rem;
+}
+div[data-testid="stPlotlyChart"] {
+    margin-top: -8px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# Cabeçalho compacto
+logo_path = Path(__file__).parent / "logo_rodrigues.png"
+
+col_logo, col_nome = st.columns([0.65, 3.35])
+
+with col_logo:
+    if logo_path.exists():
+        st.image(str(logo_path), width=65)
+    else:
+        st.markdown("## ₿")
+
+with col_nome:
+    st.markdown(
+        "<h3 style='margin:8px 0 0;color:#e8b746'>"
+        "RODRIGUES DAYTRADE</h3>",
+        unsafe_allow_html=True,
+    )
+    st.caption("BTC/BRL · SOL/BRL")
+
+# Seletores na mesma linha
+col_ativo, col_tempo, col_refresh = st.columns([1.25, 1.8, 0.55])
+
+with col_ativo:
+    asset = st.selectbox(
+        "Ativo",
+        ["BTCBRL", "SOLBRL"],
+        format_func=lambda x: "BTC/BRL" if x == "BTCBRL" else "SOL/BRL",
+    )
+
+with col_tempo:
+    periodo = st.radio(
+        "Tempo",
+        ["M3", "M15", "H1"],
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+
+interval = {"M3": "3m", "M15": "15m", "H1": "1h"}[periodo]
+
+with col_refresh:
+    if st.button("↻", help="Atualizar agora", use_container_width=True):
+        st.rerun()
+
+try:
+    result = analyze(asset, interval)
+
+    # Somente sinal e tendência ficam fora do gráfico.
+    # O preço aparece dentro do próprio gráfico.
+    col_sinal, col_tendencia = st.columns(2)
+
+    with col_sinal:
+        st.metric("SINAL", result["Sinal"])
+
+    with col_tendencia:
+        st.metric("TENDÊNCIA", result["Tendência"])
+
+    st.plotly_chart(
+        build_chart(asset, interval, result["Preço"]),
+        use_container_width=True,
+        config={
+            "staticPlot": True,
+            "displayModeBar": False,
+            "scrollZoom": False,
+            "doubleClick": False,
+            "responsive": True,
+        },
+    )
+
+    st.caption(
+        f'DIF: {result["DIF"]:.3f}  ·  '
+        f'DEA: {result["DEA"]:.3f}  ·  '
+        f'Histograma: {result["Histograma"]:.3f}'
+    )
+
+    st.caption(f'Candle fechado: {result["Horário"]}')
+
+    if (
+        result["Sinal"] in ("ENTRADA", "SAÍDA")
+        and result["key"] not in st.session_state.seen
+    ):
+        st.session_state.seen.add(result["key"])
+        record = {
+            k: v for k, v in result.items()
+            if k != "key"
+        }
+        st.session_state.signals.insert(0, record)
+        st.toast(
+            f'{asset}: {result["Sinal"]}',
+            icon="🔔",
+        )
+
+except Exception as e:
+    st.error(f"Erro ao consultar ou desenhar o gráfico: {e}")
+
+with st.expander("📋 Histórico de sinais"):
+    if st.session_state.signals:
+        st.dataframe(
+            st.session_state.signals,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        csv_buffer = io.StringIO()
+        writer = csv.DictWriter(
+            csv_buffer,
+            fieldnames=list(st.session_state.signals[0].keys()),
+        )
+        writer.writeheader()
+        writer.writerows(st.session_state.signals)
+
+        st.download_button(
+            "Baixar histórico CSV",
+            csv_buffer.getvalue(),
+            "sinais_binance.csv",
+            "text/csv",
+            use_container_width=True,
+        )
+    else:
+        st.info("Nenhum sinal registrado nesta sessão.")
+
+st.caption(
+    "Dados públicos da Binance · Sem envio de ordens. "
+    "Os sinais são informativos e não garantem resultados."
+)
+
+time.sleep(refresh)
+st.rerun()
+
 
 def build_chart(symbol, interval, latest_price):
     rows = get_klines(symbol, interval, 120)

@@ -134,7 +134,7 @@ def build_chart(symbol, interval, latest_price):
     buy_x, buy_y, sell_x, sell_y = [], [], [], []
     for i in range(len(closes)):
         if sma_fast[i] is None or sma_slow[i] is None:
-            continue
+            continues 
         if abs(dif[i]-entry_dif) <= tolerance and abs(dea[i]-entry_dea) <= tolerance and sma_fast[i] > sma_slow[i]:
             buy_x.append(dates[i]); buy_y.append(lows[i] * 0.997)
         if abs(dif[i]-exit_dif) <= tolerance and abs(dea[i]-exit_dea) <= tolerance and sma_fast[i] < sma_slow[i]:
